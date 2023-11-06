@@ -13,7 +13,9 @@
 3. Build tensor for input into NN
    - Shot type and previous event type with other numerical data from above
 4. Build variety of densely connected DLNN models with Dropout
+   - Variety of hidden layers and number of nodes in those layers
    - Either relu, elu, or tanh activation of dense layers
+   - All sigmoid activation in output layer with 1 node (to predict shot percentage)
 5. Compile and train models
    - ADAM optimizer while hyperbolically reducing learning rate as training progresses
      - Plot this learning schedule
