@@ -24,5 +24,5 @@
    - Class weights applied (imbalance in shots that are goals and those that aren't)
 6. Evaluate models
    - Most recent year is validation set
-   - Plot loss of training set and validation set
+   - Plot loss for training set and validation set
 7. Show random set of model predictions from validation set
