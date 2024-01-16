@@ -33,10 +33,10 @@ def custom_standardize(input_string):
 
 def time_process(time: str):
     """
-    Preprocess time into period into number of seconds into period as int
+    Preprocess time into period_dic into number of seconds into period_dic as int
 
-    :param time: string of time into period in the form mm:ss
-    :return: number seconds into the period as int
+    :param time: string of time into period_dic in the form mm:ss
+    :return: number seconds into the period_dic as int
     """
     mins, sec = time.split(":")
     seconds = int(mins) * 60 + int(sec)
@@ -385,7 +385,7 @@ one_hot_prev = tf.squeeze(one_hot_prev, axis=1)
 one_hot_prevtest = tf.squeeze(one_hot_prevtest, axis=1)
 one_hot_test = tf.squeeze(one_hot_test, axis=1)
 
-# Show what got vectorized
+# Show typev got vectorized
 for i in range(1, len(vect_shot_type.get_vocabulary())):
     print(f"Vectorized into {i} means--> {vect_shot_type.get_vocabulary()[i]}")
 for i in range(1, len(vect_prev_type.get_vocabulary())):
