@@ -1,33 +1,26 @@
-"""
-Currently:
-
-No normalization at the moment
-Need to correct angle data and speed data to reflect + and - angles for both sides of the net
-Training not great right now, need to increase complexity of model maybe?
-Add shift data?
-Add teams (and who is home)
-
-Still Broken:
-Plotting in Pycharm
-"""
-
 import math
 import requests
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
 import random
+from datetime import *
 from sklearn.utils import class_weight
+import pandas as pd
 
 
 class Event:
+    """
+    Play object using play-by-play from NHL API
+    """
     def __init__(self, dict_from_api, prev_event=None):
         self.whole = dict_from_api
         self.clock = self.sec_remain()
         self.typev = self.whole.get('typeDescKey', "NULL")
         self.period_dic = self.whole.get('periodDescriptor', None)
         # self.home_sided = self.whole['homeTeamDefendingSide']
-        self.details, self.team_owner = self.update_details()
+        self.details = self.get_details()
+        self.team_owner = self.get_teamowner()
         self.shot = int(self.update_shot())
         self.play1, self.play2 = self.update_players()
         self.loc_vect = self.locate()
@@ -54,7 +47,17 @@ class Event:
             return self.details.get('shotType', 'NULL')
         return "NULL"
 
+    def get_period(self):
+        if self.period_dic:
+            return str(self.period_dic['number'])
+        return str(0)
+
     def locate(self):
+        """
+        Calculate angle and distance from net using x-coord and y-coord on ice and return usable vector including zone
+
+        :return: list of x-coord (int), y-coord (int), distance (int), angle (int), zone (str)
+        """
         in_vect = [-1, -1, -1, -1, "NA"]
         if self.details:
             if "xCoord" in self.details and "yCoord" in self.details:
@@ -71,22 +74,38 @@ class Event:
         return in_vect
 
     def outclean(self):
+        """
+        Output stats from event object into vector where ints are before strings
+
+        :return: Usable vector of stats for event object (list)
+        """
         if self.prev_event:
             outputs = combine_elements(self.loc_vect, self.prev_event.get_loc(), self.speed(),
-                                       self.prev_event.time_since_prev, self.clock, self.typev, self.prev_event.typev,
-                                       self.play1, self.play2, self.shot_method, self.team_owner, self.situation)
+                                       self.prev_event.time_since_prev, self.clock, self.prev_event.typev,
+                                       self.play1, self.play2, self.get_period(), self.shot_method, self.team_owner,
+                                       self.situation)
         else:
             outputs = combine_elements(self.loc_vect, [-1, -1, -1, -1, "NA"], self.speed(), -1, self.clock,
-                                       self.typev, "NULL", self.play1, self.play2, self.shot_method,
+                                       "NULL", self.play1, self.play2, self.get_period(), self.shot_method,
                                        self.team_owner, self.situation)
         return outputs
 
     def sec_remain(self):
+        """
+        Preprocess time into period_dic into number of seconds into period_dic as int
+
+        :return: number seconds into the period_dic as int
+        """
         mins, sec = str(self.whole['timeRemaining']).split(":")
         seconds = int(mins) * 60 + int(sec)
         return seconds
 
     def speed(self):
+        """
+        Calculate angular and linear speed between current event and previous event
+
+        :return: angular and linear_speed
+        """
         ang_speed, lin_speed = -1, -1
         if self.prev_event:
             if self.loc_vect[0] > -1 and self.time_since_prev > 0 and self.loc_vect[3] > -1 and \
@@ -101,38 +120,52 @@ class Event:
 
     def time_since_prev(self):
         if self.prev_event:
-            return self.clock - self.prev_event.get_clock()
+            return self.prev_event.get_clock() - self.clock
         return -1
 
-    def update_details(self):
-        out = [None, "NULL"]
+    def get_details(self):
         if 'details' in self.whole:
-            out[0] = self.whole['details']
-            if 'eventOwnerTeamId' in out[0]:
-                out[1] = out[0]['eventOwnerTeamId']
-        return out[0], out[1]
+            return self.whole['details']
+        return None
+
+    def get_teamowner(self):
+        if self.details:
+            return str(self.details.get('eventOwnerTeamId', "NULL"))
+        return "NULL"
 
     def update_players(self):
+        """
+        Fetch players (player 1 and player 2) involved in event. If not found, use 0 in its place
+
+        :return: Tuple of player1 and player2 (strings)
+        """
+        out = [0, 0]
         if self.details:
             if self.typev in ('takeaway', 'giveaway'):
-                return self.details['playerId'], -1
+                out = self.details.get('playerId', 0), 0
             elif self.typev == 'hit':
-                return self.details['hittingPlayerId'], self.details['hitteePlayerId']
+                out = self.details.get('hittingPlayerId', 0), self.details.get('hitteePlayerId', 0)
             elif self.typev == 'blocked-shot':
-                return self.details['blockingPlayerId'], self.details['shootingPlayerId']
+                out = self.details.get('blockingPlayerId', 0), self.details.get('shootingPlayerId', 0)
             elif self.typev == 'faceoff':
-                return self.details['winningPlayerId'], self.details['losingPlayerId']
+                out = self.details.get('winningPlayerId', 0), self.details.get('losingPlayerId', 0)
             elif self.typev in ('missed-shot', 'shot-on-goal'):
-                return self.details['shootingPlayerId'], self.details.get('goalieInNetId', -1)
+                out = self.details.get('shootingPlayerId', 0), self.details.get('goalieInNetId', 0)
             elif self.typev == 'goal':
-                return self.details['scoringPlayerId'], self.details.get('goalieInNetId', -1)
-        return -1, -1
+                out = self.details.get('scoringPlayerId', 0), self.details.get('goalieInNetId', 0)
+        return str(out[0]), str(out[1])
 
     def update_shot(self):
         return self.typev in ("blocked-shot", "missed-shot", "goal", "miss", "shot-on-goal")
 
 
 def combine_elements(*args):
+    """
+    Reorder vector so ints are before strings
+
+    :param args: any number of arguments in a list
+    :return: list where order is remained except ints are before others
+    """
     ints, non_ints = [], []
     for arg in args:
         if isinstance(arg, (list, tuple)):
@@ -147,19 +180,6 @@ def combine_elements(*args):
             non_ints.append(arg)
     combined_list = ints + non_ints
     return combined_list
-
-
-# Custom functions defined
-def time_process(time: str):
-    """
-    Preprocess time into period_dic into number of seconds into period_dic as int
-
-    :param time: string of time into period_dic in the form mm:ss
-    :return: number seconds into the period_dic as int
-    """
-    mins, sec = time.split(":")
-    seconds = int(mins) * 60 + int(sec)
-    return seconds
 
 
 def get_shift_data(input_year_02=202202, num_games=1312, start=1):
@@ -213,13 +233,50 @@ def get_shot_data(input_year_02=202202, num_games=1312, start=1):
     return nn_in, nn_out
 
 
+def get_shot_data_current(start=1):
+    """
+    Process all shot data throughout reg season from current year starting from start
+
+    :param start: Game number in season to start processing shot data
+    :return: tuple of raw input shot data and raw labels for shot data
+    """
+    nn_in = []
+    nn_out = []
+    input_year_02 = str(int(datetime.now().year) - 1) + "02"
+    # Get JSON game data from NHL api for (default=every) game(s) in that season
+    unplayed = False
+    while not unplayed:
+        game_id = str(input_year_02) + f"{start:04}"
+        print(f"Getting stats from game {game_id}")
+        game_url = "https://api-web.nhle.com/v1/gamecenter/" + game_id + "/play-by-play"
+        response = requests.get(game_url, params={"Content-Type": "application/json"})
+        data = response.json()
+        response.close()
+        year, month, day = data["gameDate"].split("-")
+        if datetime.now() < (datetime(int(year), int(month), int(day)) + timedelta(days=1)):
+            unplayed = True
+        start += 1
+        if 'plays' in data:
+            previous = None
+            for i in range(len(data["plays"])):
+                event = Event(data["plays"][i], previous)
+                if event.get_type() in ("goal", "miss", "missed-shot", "shot-on-goal", "blocked_shot"):
+                    nn_out.append(event.get_goal())
+                    # Add vector of data for that shot to input tensor
+                    nn_in.append(event.outclean())
+                previous = event
+
+    nn_out = np.array(nn_out)
+    return nn_in, nn_out
+
+
 def plot_loss(his, title="Training v Validation Loss"):
     """
     Plot the training loss and the validation loss over epochs
 
     :param his: history dictionary of model.fit
     :param title: title of plot
-    :return: plt.show()
+    :return: (None) - plt.show()
     """
     epochs_list = range(1, len(his.history['loss']) + 1)
     plt.plot(epochs_list, his.history['loss'], "b", linewidth=1, label="Training")
@@ -279,7 +336,7 @@ def plot_lr(learnrate_sched, steps_pepoch=20):
 
 
 def compile_and_fit(model, concat_input, train_label, optimizer=None,
-                    max_epochs=1000, patience=20, monitor='val_binary_crossentropy'):
+                    max_epochs=1000, patience=8, monitor='val_binary_crossentropy', plot=True):
     """
 
     Compile and fit the given model
@@ -301,8 +358,8 @@ def compile_and_fit(model, concat_input, train_label, optimizer=None,
         decay_steps=5,
         decay_rate=0.02, staircase=False)
 
-    # Plot learning rate change over epochs
-    # plot_lr(lr_sched)
+    if plot:  # Plot learning rate change over epochs
+        plot_lr(lr_sched)
 
     if optimizer is None:
         optimizer = get_optimizer(lr_sched)
@@ -367,6 +424,12 @@ def vectorize_onehot(train_ds, test_ds, seq_len=1, verbose=True):
 
 
 def num_nums(training):
+    """
+    Determine number of features that are ints
+
+    :param training: input vector (from get_shot_data())
+    :return: number of features that are ints (int)
+    """
     nums = 0
     for entry in training[0]:
         if isinstance(entry, (int, float)):
@@ -374,29 +437,16 @@ def num_nums(training):
     return nums
 
 
-'''
-NEEDS REVISED
-These produce tensors of: 
-    [Shot x, 
-    shot y, 
-    Shot distance, 
-    shot angle, 
-    prev event x,
-    prev event y, 
-    prev event distance, 
-    prev event angle, 
-    time since prev event, 
-    prev event shot attempt?,
-    angular speed from prev event, 
-    linear speed from prev event, 
-    empty net?, 
-    shot type string (to be 8 one hot encoded),
-    prev event type (to be 12 one hot encoded),
-    ]
-'''
+def create_models(numfeats, tiny=True, med=True, med_tanh=True, large_sig=True):
+    """
 
-
-def create_models(numfeats, tiny=True, med=True, med_tanh=True):
+    :param numfeats: number of features in
+    :param tiny:
+    :param med:
+    :param med_tanh:
+    :param large_tanh:
+    :return:
+    """
     output = []
     if tiny:
         tiny_mod = tf.keras.Sequential([
@@ -426,51 +476,156 @@ def create_models(numfeats, tiny=True, med=True, med_tanh=True):
             tf.keras.layers.Dropout(0.2),
             tf.keras.layers.Dense(1, activation="sigmoid")], name="Medium_tanh")
         output.append(med_mod)
+    if large_sig:
+        med_mod = tf.keras.Sequential([
+            tf.keras.layers.Dense(64, activation='sigmoid', input_shape=(numfeats,)),
+            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dense(512, activation='sigmoid'),
+            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dense(2048, activation='sigmoid'),
+            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dense(512, activation='sigmoid'),
+            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dense(1, activation="sigmoid")], name="Large_sigmoid")
+        output.append(med_mod)
     return output
+
+
+def data_parse_to_csv():
+    train_in_11, train_lab_11 = get_shot_data(input_year_02=201102, num_games=1230)
+    train_in_12, train_lab_12 = get_shot_data(input_year_02=201202, num_games=720)
+    train_in_13, train_lab_13 = get_shot_data(input_year_02=201302, num_games=1230)
+    train_in_14, train_lab_14 = get_shot_data(input_year_02=201402, num_games=1230)
+    train_in_15, train_lab_15 = get_shot_data(input_year_02=201502, num_games=1230)
+    train_in_16, train_lab_16 = get_shot_data(input_year_02=201602, num_games=1230)
+    train_in_17, train_lab_17 = get_shot_data(input_year_02=201702, num_games=1271)
+    train_in_18, train_lab_18 = get_shot_data(input_year_02=201802, num_games=1271)
+    train_in_19, train_lab_19 = get_shot_data(input_year_02=201902, num_games=1082)
+    train_in_20, train_lab_20 = get_shot_data(input_year_02=202002, num_games=868)
+    train_in_21, train_lab_21 = get_shot_data(input_year_02=202102, num_games=1312)
+    train_in_22, train_lab_22 = get_shot_data(input_year_02=202202, num_games=1312)
+    train_in_23, train_lab_23 = get_shot_data_current(start=1)
+
+    train_in, train_lab = list(train_in_11), list(train_lab_11)
+
+    for inp, lab in zip([train_in_11, train_in_12, train_in_13, train_in_14, train_in_15, train_in_16, train_in_17,
+                         train_in_18, train_in_19, train_in_20, train_in_21, train_in_22],
+                        [train_lab_11, train_lab_12, train_lab_13, train_lab_14, train_lab_15, train_lab_16,
+                         train_lab_17, train_lab_18, train_lab_19, train_lab_20, train_lab_21, train_lab_22]):
+        train_in.extend(inp)
+        train_lab.extend(lab)
+
+    test_in, test_lab = list(train_in_23), list(train_lab_23)
+
+    columns = ["Event x-coord", "Event y-coord", "Event distance", "Event angle", "Prev x-coord", "Prev y-coord",
+               "Prev distance", "Prev angle", "Event anglular speed", "Event linear speed", "Time since prev event",
+               "Seconds remaining period", "Event zone", "Prev zone", "Prev type", "Player1", "Player2",
+               "Period", "Shot method", "Event team owner", "One-ice situation"]
+
+    training_df = pd.DataFrame(train_in, columns=columns)
+    testing_df = pd.DataFrame(test_in, columns=columns)
+    training_lab_df = pd.DataFrame(train_lab, columns=["Goal"])
+    testing_lab_df = pd.DataFrame(test_lab, columns=["Goal"])
+    training_df.to_csv("training11-22.csv", index=True)
+    testing_df.to_csv("testing23.csv", index=True)
+    training_lab_df.to_csv("labs_training11-22.csv", index=True)
+    testing_lab_df.to_csv("labs_testing23.csv", index=True)
+
+
+def recreate_dataset(csv_file, full, num_intfeats=12, out_len=1000):
+    with open(csv_file, "r") as file:
+        output = []
+        for line in file.readlines()[1:]:
+            row = line.split(",")[1:]
+            if len(row) > 1 :
+                row = [int(item) for item in row[:num_intfeats]] + [str(item) for item in row[num_intfeats:]]
+            else:
+                row = int(row[0])
+            output.append(row)
+    if full:
+        return output
+    return output[0:out_len]
+
+
+def update_current_season(csv_file):
+    train_in_23, train_lab_23 = get_shot_data_current(start=1)
+    columns = ["Event x-coord", "Event y-coord", "Event distance", "Event angle", "Prev x-coord", "Prev y-coord",
+               "Prev distance", "Prev angle", "Event anglular speed", "Event linear speed", "Time since prev event",
+               "Seconds remaining period", "Event zone", "Prev zone", "Prev type", "Player1", "Player2",
+               "Period", "Shot method", "Event team owner", "One-ice situation"]
+    testing_in_df = pd.DataFrame(train_in_23, columns=columns)
+    testing_lab_df = pd.DataFrame(train_lab_23, columns=["Goal"])
+    testing_in_df.to_csv(csv_file, index=True)
+    testing_lab_df.to_csv(f"labs_{csv_file}", index=True)
+
+
+def build_train_eval(train, train_lab, test, test_lab, num_tests=100, show_predictions=True, plot=True):
+    size_histories = {}
+    rando = random.randint(10, len(test_lab) - num_tests)
+    print(f"Number of features: {len(train[0])}")
+
+    # Evaluate models with new unseen test data
+    for mod in create_models(len(train[0]), tiny=True, med=True, med_tanh=True, large_sig=True):
+        # Compile and Train models and store progress
+        fitted = compile_and_fit(mod, concat_input=train, train_label=train_lab, patience=20, plot=False)
+        size_histories[f"{mod.name}"] = fitted
+        if plot:
+            plot_loss(fitted, title=f"{mod.name} Training vs Validation Loss")
+        loss, bin_entr, acc = mod.evaluate(test, test_lab, verbose=2)
+        print(f"{mod.name} \n Evaluation loss, binary crossentropy, acc = {(loss, bin_entr, acc)}")
+        if show_predictions:
+            # Prediction of some shots
+            predictions = mod.predict(test[rando:rando + num_tests])
+            print("\n" + f"{mod.name} Predictions:")
+            for pred, truth in zip(predictions, test_lab[rando:rando + num_tests]):
+                state = ('No Goal', 'Goal')[truth]
+                print(f"Predicted: {pred[0] * 100:.2f}% vs Truth: {state}")
 
 
 def main():
     num_tests = 100  # Number of random shots to test
     size_histories = {}
 
-    train_in_11, train_lab_11 = get_shot_data(201102, 1230)
-    train_in_12, train_lab_12 = get_shot_data(201202, 720)
-    train_in_13, train_lab_13 = get_shot_data(201302, 1230)
-    train_in_14, train_lab_14 = get_shot_data(201402, 1230)
-    train_in_15, train_lab_15 = get_shot_data(201502, 1230)
-    train_in_16, train_lab_16 = get_shot_data(201602, 1230)
-    train_in_17, train_lab_17 = get_shot_data(201702, 1271)
-    train_in_18, train_lab_18 = get_shot_data(201802, 1271)
-    train_in_19, train_lab_19 = get_shot_data(201902, 1082)
-    train_in_20, train_lab_20 = get_shot_data(202002, 868)
-    train_in_21, train_lab_21 = get_shot_data(202102, 1312)
-    train_in_22, train_lab_22 = get_shot_data(202202, 1312)
+    train_in_11, train_lab_11 = get_shot_data(input_year_02=201102, num_games=1230)
+    train_in_12, train_lab_12 = get_shot_data(input_year_02=201202, num_games=720)
+    train_in_13, train_lab_13 = get_shot_data(input_year_02=201302, num_games=1230)
+    train_in_14, train_lab_14 = get_shot_data(input_year_02=201402, num_games=1230)
+    train_in_15, train_lab_15 = get_shot_data(input_year_02=201502, num_games=1230)
+    train_in_16, train_lab_16 = get_shot_data(input_year_02=201602, num_games=1230)
+    train_in_17, train_lab_17 = get_shot_data(input_year_02=201702, num_games=1271)
+    train_in_18, train_lab_18 = get_shot_data(input_year_02=201802, num_games=1271)
+    train_in_19, train_lab_19 = get_shot_data(input_year_02=201902, num_games=1082)
+    train_in_20, train_lab_20 = get_shot_data(input_year_02=202002, num_games=868)
+    train_in_21, train_lab_21 = get_shot_data(input_year_02=202102, num_games=1312)
+    train_in_22, train_lab_22 = get_shot_data(input_year_02=202202, num_games=1312)
+    train_in_23, train_lab_23 = get_shot_data_current(start=1)
 
     train_in, train_lab = list(train_in_11), list(train_lab_11)
 
     for inp, lab in zip([train_in_11, train_in_12, train_in_13, train_in_14, train_in_15, train_in_16, train_in_17,
-                         train_in_18, train_in_19, train_in_20, train_in_21],
+                         train_in_18, train_in_19, train_in_20, train_in_21, train_in_22],
                         [train_lab_11, train_lab_12, train_lab_13, train_lab_14, train_lab_15, train_lab_16,
-                         train_lab_17, train_lab_18, train_lab_19, train_lab_20, train_lab_21]):
+                         train_lab_17, train_lab_18, train_lab_19, train_lab_20, train_lab_21,train_lab_22]):
         train_in.extend(inp)
         train_lab.extend(lab)
 
-    test_in, test_lab = train_in_22, train_lab_22
+    test_in, test_lab = train_in_23, train_lab_23
 
     # Create Constant Tensors for ease of computing and leaving in/out tensors untouched
-    onehotted_text = vectorize_onehot(train_ds=train_in, test_ds=test_in, verbose=False)
-    concat_input, train_label = tf.constant(onehotted_text[0]), tf.constant(train_lab)
-    concat_test, test_label = tf.constant(onehotted_text[1]), tf.constant(test_lab)
+    onehotted_input, onehotted_test = vectorize_onehot(train_ds=train_in, test_ds=test_in, verbose=False)
+    concat_input, train_label = tf.constant(onehotted_input), tf.constant(train_lab)
+    concat_test, test_label = tf.constant(onehotted_test), tf.constant(test_lab)
 
     numfeats = len(concat_input[0])
+    print(f"Number of features: {numfeats}")
     rando = random.randint(10, len(test_lab) - num_tests)
 
     # Evaluate models with new unseen test data
-    for mod in create_models(numfeats):
+    for mod in create_models(numfeats, tiny=True, med=False, med_tanh=False, large_sig=True):
         # Compile and Train models and store progress
-        fitted = compile_and_fit(mod, concat_input=concat_input, train_label=train_label)
+        fitted = compile_and_fit(mod, concat_input=concat_input, train_label=train_label, patience=20)
         size_histories[f"{mod.name}"] = fitted
-        # plot_loss(fitted, title=f"{mod.name} Training vs Validation Loss")
+        plot_loss(fitted, title=f"{mod.name} Training vs Validation Loss")
         loss, bin_entr, acc = mod.evaluate(concat_test, test_label, verbose=2)
         print(f"{mod.name} \n Evaluation loss, binary crossentropy, acc = {(loss, bin_entr, acc)}")
 
@@ -480,57 +635,24 @@ def main():
         for pred, truth in zip(predictions, test_label[rando:rando + num_tests]):
             state = ('No Goal', 'Goal')[truth]
             print(f"Predicted: {pred[0] * 100:.2f}% vs Truth: {state}")
+
 
 def main_test():
-    num_tests = 100  # Number of random shots to test
-    size_histories = {}
-
-    train_in_11, train_lab_11 = get_shot_data(201102, 1230)
-    train_in_12, train_lab_12 = get_shot_data(201202, 720)
-    # train_in_13, train_lab_13 = get_shot_data(201302, 1230)
-    # train_in_14, train_lab_14 = get_shot_data(201402, 1230)
-    # train_in_15, train_lab_15 = get_shot_data(201502, 1230)
-    # train_in_16, train_lab_16 = get_shot_data(201602, 1230)
-    # train_in_17, train_lab_17 = get_shot_data(201702, 1271)
-    # train_in_18, train_lab_18 = get_shot_data(201802, 1271)
-    # train_in_19, train_lab_19 = get_shot_data(201902, 1082)
-    # train_in_20, train_lab_20 = get_shot_data(202002, 868)
-    # train_in_21, train_lab_21 = get_shot_data(202102, 1312)
-    train_in_22, train_lab_22 = get_shot_data(202202, 1312)
-
-    train_in, train_lab = list(train_in_11), list(train_lab_11)
-
-    for inp, lab in zip([train_in_11, train_in_12],
-                        [train_lab_11, train_lab_12]):
-        train_in.extend(inp)
-        train_lab.extend(lab)
-
-    test_in, test_lab = train_in_22, train_lab_22
-
+    # Import NHL shot data from previous run
+    train_in = recreate_dataset("training11-22.csv", full=True)
+    test_in = recreate_dataset("testing23.csv", full=True)
+    train_lab = recreate_dataset("training_lab_11-22.csv", full=True)
+    test_lab = recreate_dataset("testing_lab_23.csv", full=True)
+    # Text vectorize and one-hot
+    onehotted_input, onehotted_test = vectorize_onehot(train_ds=train_in, test_ds=test_in, verbose=False)
     # Create Constant Tensors for ease of computing and leaving in/out tensors untouched
-    onehotted_text = vectorize_onehot(train_ds=train_in, test_ds=test_in, verbose=False)
-    concat_input, train_label = tf.constant(onehotted_text[0]), tf.constant(train_lab)
-    concat_test, test_label = tf.constant(onehotted_text[1]), tf.constant(test_lab)
-
-    numfeats = len(concat_input[0])
-    rando = random.randint(10, len(test_lab) - num_tests)
-
-    # Evaluate models with new unseen test data
-    for mod in create_models(numfeats):
-        # Compile and Train models and store progress
-        fitted = compile_and_fit(mod, concat_input=concat_input, train_label=train_label)
-        size_histories[f"{mod.name}"] = fitted
-        # plot_loss(fitted, title=f"{mod.name} Training vs Validation Loss")
-        loss, bin_entr, acc = mod.evaluate(concat_test, test_label, verbose=2)
-        print(f"{mod.name} \n Evaluation loss, binary crossentropy, acc = {(loss, bin_entr, acc)}")
-
-        # Prediction of some shots
-        predictions = mod.predict(concat_test[rando:rando + num_tests])
-        print("\n" + f"{mod.name} Predictions:")
-        for pred, truth in zip(predictions, test_label[rando:rando + num_tests]):
-            state = ('No Goal', 'Goal')[truth]
-            print(f"Predicted: {pred[0] * 100:.2f}% vs Truth: {state}")
+    concat_input, train_label = tf.constant(onehotted_input), tf.constant(train_lab)
+    concat_test, test_label = tf.constant(onehotted_test), tf.constant(test_lab)
+    # Modelling
+    build_train_eval(concat_input, train_label, concat_test, test_label, show_predictions=True, plot=False)
 
 
 if __name__ == "__main__":
-    main()
+    main_test()
+
+
