@@ -14,6 +14,12 @@ class Event:
     Play object using play-by-play from NHL API
     """
     def __init__(self, dict_from_api, prev_event=None):
+        """
+        Constructor for object from dictionary of event from NHL play-by-play
+
+        :param dict_from_api: dictionary of event
+        :param prev_event: previous event
+        """
         self.whole = dict_from_api
         self.clock = self.sec_remain()
         self.typev = self.whole.get('typeDescKey', "NULL")
@@ -206,8 +212,7 @@ def get_shot_data(input_year_02=202202, num_games=1312, start=1):
     :param start: where in the season to start processing shot data
     :return: tuple of raw input shot data and raw labels for shot data
     """
-    nn_in = []
-    nn_out = []
+    nn_in, nn_out = [], []
 
     # Get JSON game data from NHL api for (default=every) game(s) in that season
     for game_num in range(start, start + num_games):
@@ -220,14 +225,13 @@ def get_shot_data(input_year_02=202202, num_games=1312, start=1):
         if 'plays' not in data:
             break
 
-        previous = None
+        previous = None  # Initialize previous event
         for i in range(len(data["plays"])):
             event = Event(data["plays"][i], previous)
             if event.get_type() in ("goal", "miss", "missed-shot", "shot-on-goal", "blocked_shot"):
-                nn_out.append(event.get_goal())
-                # Add vector of data for that shot to input tensor
-                nn_in.append(event.outclean())
-            previous = event
+                nn_out.append(event.get_goal())  # Add outcome for that shot
+                nn_in.append(event.outclean())  # Add vector of data for that shot
+            previous = event  # Save event to be previous for the next event
 
     nn_out = np.array(nn_out)
     return nn_in, nn_out
@@ -240,31 +244,35 @@ def get_shot_data_current(start=1):
     :param start: Game number in season to start processing shot data
     :return: tuple of raw input shot data and raw labels for shot data
     """
-    nn_in = []
-    nn_out = []
+    nn_in, nn_out = [], []
+
+    # Get current year, formatted for input into NHL API
     input_year_02 = str(int(datetime.now().year) - 1) + "02"
-    # Get JSON game data from NHL api for (default=every) game(s) in that season
-    unplayed = False
+
+    unplayed = False  # Flag
     while not unplayed:
+        # Get JSON game data from NHL api for (default=every) game(s) in that season
         game_id = str(input_year_02) + f"{start:04}"
         print(f"Getting stats from game {game_id}")
         game_url = "https://api-web.nhle.com/v1/gamecenter/" + game_id + "/play-by-play"
         response = requests.get(game_url, params={"Content-Type": "application/json"})
         data = response.json()
         response.close()
-        year, month, day = data["gameDate"].split("-")
-        if datetime.now() < (datetime(int(year), int(month), int(day)) + timedelta(days=1)):
-            unplayed = True
-        start += 1
+
         if 'plays' in data:
             previous = None
             for i in range(len(data["plays"])):
                 event = Event(data["plays"][i], previous)
                 if event.get_type() in ("goal", "miss", "missed-shot", "shot-on-goal", "blocked_shot"):
-                    nn_out.append(event.get_goal())
-                    # Add vector of data for that shot to input tensor
-                    nn_in.append(event.outclean())
-                previous = event
+                    nn_out.append(event.get_goal())  # Add outcome for that shot
+                    nn_in.append(event.outclean())  # Add vector of data for that shot
+                previous = event  # Save event to be previous for the next event
+
+        # If games haven't been played yet, flip the flag
+        year, month, day = data["gameDate"].split("-")
+        if datetime.now() < (datetime(int(year), int(month), int(day)) + timedelta(days=1)):
+            unplayed = True
+        start += 1  # Increment game number
 
     nn_out = np.array(nn_out)
     return nn_in, nn_out
@@ -318,7 +326,7 @@ def get_callbacks(patience=8, monitor='val_binary_crossentropy'):
 
 def plot_lr(learnrate_sched, steps_pepoch=20):
     """
-    Plot to how learning rate changes over epochs
+    Plot to show how learning rate changes over epochs
 
     :param learnrate_sched: InverseTimeDecay schedule from tf.keras.optimizers.schedules
     :param steps_pepoch: steps per epoch (how many batches processed per epoch)
@@ -330,6 +338,7 @@ def plot_lr(learnrate_sched, steps_pepoch=20):
     plt.figure(figsize=(8, 6))
     plt.plot(step / steps_pepoch, lr)
     plt.ylim([0, max(plt.ylim())])
+    plt.title("Change in Learning Rate over epochs")
     plt.xlabel("Epoch")
     plt.ylabel("Learning Rate")
     plt.show()
@@ -338,16 +347,16 @@ def plot_lr(learnrate_sched, steps_pepoch=20):
 def compile_and_fit(model, concat_input, train_label, optimizer=None,
                     max_epochs=1000, patience=8, monitor='val_binary_crossentropy', plot=True):
     """
-
     Compile and fit the given model
 
-    :param concat_input:
-    :param train_label:
-    :param model: Model using to compile and fit
+    :param model: model to compile and fit
+    :param concat_input: training input EagerTensor
+    :param train_label: training labels EagerTensor
     :param optimizer: optimizer being used (ADAM default)
     :param max_epochs: maximum number of epochs to train
     :param patience: epoch patience on EarlyStoppage callback
     :param monitor: metric to monitor for EarlyStoppage
+    :param plot: whether to plot the change in learning schedule
     :return: history dictionary from model fitting
     """
     n_train = int(1e5)
@@ -365,10 +374,10 @@ def compile_and_fit(model, concat_input, train_label, optimizer=None,
         optimizer = get_optimizer(lr_sched)
     model.compile(optimizer=optimizer,
                   loss=tf.keras.losses.BinaryCrossentropy(from_logits=False),
-                  metrics=[
-                      tf.keras.metrics.BinaryCrossentropy(
-                          from_logits=False, name='binary_crossentropy'), 'accuracy'])
-    model.summary()
+                  metrics=[tf.keras.metrics.BinaryCrossentropy(from_logits=False,
+                                                               name='binary_crossentropy'),
+                           'accuracy'])
+    model.summary()  # Print summary of model to screen
 
     # Create class weights dict that can account for imbalance of goals/no goals in fitting
     class_weights = class_weight.compute_class_weight("balanced", classes=[0, 1], y=np.array(train_label))
@@ -388,6 +397,16 @@ def compile_and_fit(model, concat_input, train_label, optimizer=None,
 
 
 def vectorize_onehot(train_ds, test_ds, seq_len=1, verbose=True):
+    """
+    Adapt text vectorization of features in training dataset that are strings and apply adapted text vectorization
+    to test dataset. Apply one hot encoding to entrie training and testing input datasets.
+
+    :param train_ds: training input dataset (list)
+    :param test_ds: testing input dataset (list)
+    :param seq_len: length of vectorization (default=1)
+    :param verbose: print result of vectorization if True
+    :return: One-hot encoded training and test datasets
+    """
     # TextVectorization layers
     num_feats = num_nums(train_ds)
     train_lays, test_lays = [], []
@@ -425,7 +444,7 @@ def vectorize_onehot(train_ds, test_ds, seq_len=1, verbose=True):
 
 def num_nums(training):
     """
-    Determine number of features that are ints
+    Determine number of features that are integers
 
     :param training: input vector (from get_shot_data())
     :return: number of features that are ints (int)
@@ -439,13 +458,14 @@ def num_nums(training):
 
 def create_models(numfeats, tiny=True, med=True, med_tanh=True, large_sig=True):
     """
+    Create Sequential models using appropriate number of input features
 
-    :param numfeats: number of features in
-    :param tiny:
-    :param med:
-    :param med_tanh:
-    :param large_tanh:
-    :return:
+    :param numfeats: number of features in input tensor
+    :param tiny: whether to create tiny model
+    :param med: whether to create medium model
+    :param med_tanh: whether to create medium model with tanha activation
+    :param large_sig: whether to create large model with sigmoid activation
+    :return: models created stored in a list
     """
     output = []
     if tiny:
@@ -492,6 +512,12 @@ def create_models(numfeats, tiny=True, med=True, med_tanh=True, large_sig=True):
 
 
 def data_parse_to_csv():
+    """
+    Collect shot data from 2011-current year from NHL API and save training and testing input and label sets
+    to 4 separate csv
+
+    :return: None
+    """
     train_in_11, train_lab_11 = get_shot_data(input_year_02=201102, num_games=1230)
     train_in_12, train_lab_12 = get_shot_data(input_year_02=201202, num_games=720)
     train_in_13, train_lab_13 = get_shot_data(input_year_02=201302, num_games=1230)
@@ -533,11 +559,20 @@ def data_parse_to_csv():
 
 
 def recreate_dataset(csv_file, full, num_intfeats=12, out_len=1000):
+    """
+    Use prepared csvs (created by data_parse_to_csv()) to read files and create lists useable for training/testing
+
+    :param csv_file: path to csv_file
+    :param full: whether to use full dataset or not
+    :param num_intfeats: number of integer features in dataset
+    :param out_len: if don't use full dataset, how many rows to use
+    :return:
+    """
     with open(csv_file, "r") as file:
         output = []
         for line in file.readlines()[1:]:
-            row = line.split(",")[1:]
-            if len(row) > 1 :
+            row = line.rstrip().split(",")[1:]
+            if len(row) > 1:
                 row = [int(item) for item in row[:num_intfeats]] + [str(item) for item in row[num_intfeats:]]
             else:
                 row = int(row[0])
@@ -548,6 +583,12 @@ def recreate_dataset(csv_file, full, num_intfeats=12, out_len=1000):
 
 
 def update_current_season(csv_file):
+    """
+    Update current season's csv to include recent games, creates new csv
+
+    :param csv_file: path to csv
+    :return: None
+    """
     train_in_23, train_lab_23 = get_shot_data_current(start=1)
     columns = ["Event x-coord", "Event y-coord", "Event distance", "Event angle", "Prev x-coord", "Prev y-coord",
                "Prev distance", "Prev angle", "Event anglular speed", "Event linear speed", "Time since prev event",
@@ -560,6 +601,18 @@ def update_current_season(csv_file):
 
 
 def build_train_eval(train, train_lab, test, test_lab, num_tests=100, show_predictions=True, plot=True):
+    """
+
+
+    :param train:
+    :param train_lab:
+    :param test:
+    :param test_lab:
+    :param num_tests:
+    :param show_predictions:
+    :param plot:
+    :return:
+    """
     size_histories = {}
     rando = random.randint(10, len(test_lab) - num_tests)
     print(f"Number of features: {len(train[0])}")
