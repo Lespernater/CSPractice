@@ -64,7 +64,7 @@ class Event:
 
         :return: list of x-coord (int), y-coord (int), distance (int), angle (int), zone (str)
         """
-        in_vect = [-1, -1, -1, -1, "NA"]
+        in_vect = [-1, -1, -1, -1, "NULL"]
         if self.details:
             if "xCoord" in self.details and "yCoord" in self.details:
                 in_vect[4] = self.whole['details']['zoneCode']
@@ -91,7 +91,7 @@ class Event:
                                        self.play1, self.play2, self.get_period(), self.shot_method, self.team_owner,
                                        self.situation)
         else:
-            outputs = combine_elements(self.loc_vect, [-1, -1, -1, -1, "NA"], self.speed(), -1, self.clock,
+            outputs = combine_elements(self.loc_vect, [-1, -1, -1, -1, "NULL"], self.speed(), -1, self.clock,
                                        "NULL", self.play1, self.play2, self.get_period(), self.shot_method,
                                        self.team_owner, self.situation)
         return outputs
