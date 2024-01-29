@@ -278,7 +278,7 @@ def get_shot_data_current(start=1):
     return nn_in, nn_out
 
 
-def plot_loss(his, title="Training v Validation Loss"):
+def plot_loss(his, title="Training v Validation Loss", f_name="training_loss.png"):
     """
     Plot the training loss and the validation loss over epochs
 
@@ -288,14 +288,16 @@ def plot_loss(his, title="Training v Validation Loss"):
     """
     epochs_list = range(1, len(his.history['loss']) + 1)
     plt.plot(epochs_list, his.history['loss'], "b", linewidth=1, label="Training")
-    plt.plot(epochs_list, his.history['val_loss'], "bo", markersize=1, label="Validation")
+    plt.plot(epochs_list, his.history['val_loss'], "bo", linewidth=1, label="Validation")
     plt.title(title)
     plt.xlabel("Epochs")
     plt.ylabel("Loss")
     plt.ylim(0, 5)
     plt.grid(True)
     plt.legend()
-    plt.show()
+    plt.tight_layout()
+    plt.savefig(f_name)
+    plt.close()
 
 
 def get_optimizer(learningrate_sched):
@@ -324,7 +326,7 @@ def get_callbacks(patience=8, monitor='val_binary_crossentropy'):
     ]
 
 
-def plot_lr(learnrate_sched, steps_pepoch=20):
+def plot_lr(learnrate_sched, steps_pepoch=20, f_name="lr_plot.png"):
     """
     Plot to show how learning rate changes over epochs
 
@@ -341,7 +343,9 @@ def plot_lr(learnrate_sched, steps_pepoch=20):
     plt.title("Change in Learning Rate over epochs")
     plt.xlabel("Epoch")
     plt.ylabel("Learning Rate")
-    plt.show()
+    plt.tight_layout()
+    plt.savefig(f_name)
+    plt.close()
 
 
 def compile_and_fit(model, concat_input, train_label, optimizer=None,
@@ -407,7 +411,6 @@ def vectorize_onehot(train_ds, test_ds, seq_len=1, verbose=True):
     :param verbose: print result of vectorization if True
     :return: One-hot encoded training and test datasets
     """
-    # TextVectorization layers
     num_feats = num_nums(train_ds)
     train_lays, test_lays = [], []
     # Create tensors from raw input data that are numerical
@@ -456,58 +459,61 @@ def num_nums(training):
     return nums
 
 
-def create_models(numfeats, tiny=True, med=True, med_tanh=True, large_sig=True):
+def create_models(numfeats, tiny=True, med=True, med_tanh=True, large_sig=True, dropout=0.2):
     """
     Create Sequential models using appropriate number of input features
+
+    NOTE: REFORMAT SO MODEL CHOICES AS BOOLEAN VECTOR [1,0,0,0] for tiny only
 
     :param numfeats: number of features in input tensor
     :param tiny: whether to create tiny model
     :param med: whether to create medium model
     :param med_tanh: whether to create medium model with tanha activation
     :param large_sig: whether to create large model with sigmoid activation
+    :param dropout: proportion of dropout between each dense layer
     :return: models created stored in a list
     """
     output = []
     if tiny:
         tiny_mod = tf.keras.Sequential([
             tf.keras.layers.Dense(64, activation='elu', input_shape=(numfeats,)),
-            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Dense(512, activation='elu'),
-            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Dense(1, activation="sigmoid")], name="Tiny")
         output.append(tiny_mod)
     if med:
         med_mod = tf.keras.Sequential([
             tf.keras.layers.Dense(64, activation='relu', input_shape=(numfeats,)),
-            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Dense(512, activation='relu'),
-            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Dense(512, activation='relu'),
-            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Dense(1, activation="sigmoid")], name="Medium")
         output.append(med_mod)
     if med_tanh:
-        med_mod = tf.keras.Sequential([
+        med_tanh_mod = tf.keras.Sequential([
             tf.keras.layers.Dense(64, activation='tanh', input_shape=(numfeats,)),
-            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Dense(512, activation='tanh'),
-            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Dense(512, activation='tanh'),
-            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Dense(1, activation="sigmoid")], name="Medium_tanh")
-        output.append(med_mod)
+        output.append(med_tanh_mod)
     if large_sig:
-        med_mod = tf.keras.Sequential([
+        large_sig_mod = tf.keras.Sequential([
             tf.keras.layers.Dense(64, activation='sigmoid', input_shape=(numfeats,)),
-            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Dense(512, activation='sigmoid'),
-            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Dense(2048, activation='sigmoid'),
-            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Dense(512, activation='sigmoid'),
-            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Dense(1, activation="sigmoid")], name="Large_sigmoid")
-        output.append(med_mod)
+        output.append(large_sig_mod)
     return output
 
 
@@ -515,6 +521,8 @@ def data_parse_to_csv():
     """
     Collect shot data from 2011-current year from NHL API and save training and testing input and label sets
     to 4 separate csv
+
+    NOTE: NEED TO REFORMAT TO ADD LABELS TO TRAINING/TESTING CSVS (2 csvs instead of 4)
 
     :return: None
     """
@@ -552,10 +560,10 @@ def data_parse_to_csv():
     testing_df = pd.DataFrame(test_in, columns=columns)
     training_lab_df = pd.DataFrame(train_lab, columns=["Goal"])
     testing_lab_df = pd.DataFrame(test_lab, columns=["Goal"])
-    training_df.to_csv("training11-22.csv", index=True)
-    testing_df.to_csv("testing23.csv", index=True)
-    training_lab_df.to_csv("labs_training11-22.csv", index=True)
-    testing_lab_df.to_csv("labs_testing23.csv", index=True)
+    training_df.to_csv("data/training11-22.csv", index=True)
+    testing_df.to_csv("data/testing23.csv", index=True)
+    training_lab_df.to_csv("data/labs_training11-22.csv", index=True)
+    testing_lab_df.to_csv("data/labs_testing23.csv", index=True)
 
 
 def recreate_dataset(csv_file, full, num_intfeats=12, out_len=1000):
@@ -573,6 +581,7 @@ def recreate_dataset(csv_file, full, num_intfeats=12, out_len=1000):
         for line in file.readlines()[1:]:
             row = line.rstrip().split(",")[1:]
             if len(row) > 1:
+                # noinspection PyTypeChecker
                 row = [int(item) for item in row[:num_intfeats]] + [str(item) for item in row[num_intfeats:]]
             else:
                 row = int(row[0])
@@ -602,7 +611,8 @@ def update_current_season(csv_file):
 
 def build_train_eval(train, train_lab, test, test_lab, num_tests=100, show_predictions=True, plot=True):
     """
-
+    Build, train and evaluate densely connected models with showiing of predictions on the test set (default=True) and
+    plotting of training vs validation loss (default=True)
 
     :param train:
     :param train_lab:
@@ -691,11 +701,13 @@ def main():
 
 
 def main_test():
+    # Collect data from NHL API and produce csvs
+    data_parse_to_csv()
     # Import NHL shot data from previous run
-    train_in = recreate_dataset("training11-22.csv", full=True)
-    test_in = recreate_dataset("testing23.csv", full=True)
-    train_lab = recreate_dataset("training_lab_11-22.csv", full=True)
-    test_lab = recreate_dataset("testing_lab_23.csv", full=True)
+    train_in = recreate_dataset("data/training11-22.csv", full=True)
+    test_in = recreate_dataset("data/testing23.csv", full=True)
+    train_lab = recreate_dataset("data/labs_training11-22.csv", full=True)
+    test_lab = recreate_dataset("data/labs_testing23.csv", full=True)
     # Text vectorize and one-hot
     onehotted_input, onehotted_test = vectorize_onehot(train_ds=train_in, test_ds=test_in, verbose=False)
     # Create Constant Tensors for ease of computing and leaving in/out tensors untouched
