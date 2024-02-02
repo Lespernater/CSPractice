@@ -1,7 +1,7 @@
 # NHL Neural Network
 
 ### Currently (last updated January 2024):
-1. Parse and process shot data from play by play datasets from NHL API for all games 2011 - 2022
+1. Parse and process shot data from play by play datasets from NHL API for all games 2011 - 2023
    - Calculate number of seconds into the period
    - Calculate angle and distance to the net from location on ice
    - Process strings for downstream text vectorization
