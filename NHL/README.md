@@ -23,11 +23,11 @@
    - All sigmoid activation in output layer with 1 node (to predict shot percentage)
 5. Compile and train models
    - ADAM optimizer while hyperbolically reducing learning rate as training progresses
-     - Plot this learning schedule (current WIP)
+     - Plot this learning schedule
    - Track loss, accuracy, binary cross entropy
    - Early stoppage to prevent overfitting (based on validation binary cross entropy with some patience)
    - Class weights applied (imbalance in shots that are goals and those that aren't)
 6. Evaluate trained models
    - Most recent year is validation set
-   - Plot loss for training set and validation set (current WIP)
+   - Plot loss for training set and validation set
 7. Show random set of model predictions from validation set
