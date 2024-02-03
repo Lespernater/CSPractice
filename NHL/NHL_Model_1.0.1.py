@@ -609,6 +609,23 @@ def update_current_season(csv_file):
     testing_lab_df.to_csv(f"labs_{csv_file}", index=True)
 
 
+def update_current_season_test(csv_file):
+    """
+    Update current season's csv to include recent games, creates new csv
+
+    :param csv_file: path to csv
+    :return: None
+    """
+    train_in_23, train_lab_23 = get_shot_data_current(start=700)
+    columns = ["Event x-coord", "Event y-coord", "Event distance", "Event angle", "Prev x-coord", "Prev y-coord",
+               "Prev distance", "Prev angle", "Event anglular speed", "Event linear speed", "Time since prev event",
+               "Seconds remaining period", "Event zone", "Prev zone", "Prev type", "Player1", "Player2",
+               "Period", "Shot method", "Event team owner", "One-ice situation"]
+    testing_df = pd.DataFrame(train_in_23, columns=columns)
+    testing_df["Goal"] = train_lab_23
+    testing_df.to_csv(csv_file, index=True)
+
+
 def build_train_eval(train, train_lab, test, test_lab, num_tests=100, show_predictions=True, plot=True):
     """
     Build, train and evaluate densely connected models with showiing of predictions on the test set (default=True) and
@@ -700,7 +717,7 @@ def main():
             print(f"Predicted: {pred[0] * 100:.2f}% vs Truth: {state}")
 
 
-def main_test():
+def main2():
     # Collect data from NHL API and produce csvs
     data_parse_to_csv()
     # Import NHL shot data from previous run
@@ -718,6 +735,6 @@ def main_test():
 
 
 if __name__ == "__main__":
-    main_test()
+    update_current_season_test("testing23.csv")
 
 

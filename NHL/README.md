@@ -14,6 +14,7 @@
    - Include previous event's time, distance, angle, event type, zone
    - Calculate time since previous event
    - Calculate linear and angular speed from previous event
+   - Option to write all training and testing datasets to separate csvs
 2. Apply text vectorization on strings and one-hot encode them
 3. Build tensor for input into NN
    - Combine one-hotted categorical variables with numerical variables
