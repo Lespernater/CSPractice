@@ -237,6 +237,47 @@ def get_shot_data(input_year_02=202202, num_games=1312, start=1):
     return nn_in, nn_out
 
 
+def get_shot_data_test(year: int, start=1):
+    """
+    Process all shot data from number games starting from start throughout reg season of given input year
+
+    :param year:
+    :param input_year_02: year + 02 for reg season
+    :param num_games: number of games to process shot data for
+    :param start: where in the season to start processing shot data
+    :return: tuple of raw input shot data and raw labels for shot data
+    """
+
+    games_per_year = {11: 1230, 12: 720, 13: 1230, 14: 1230, 15: 1230, 16: 1230,
+                      17: 1271, 18: 1271, 19: 1082, 20: 868, 21: 1312, 22: 1312}
+
+    nn_in, nn_out = [], []
+
+    input_year_02 = "20" + str(year) + "02"
+    num_games = games_per_year[year]
+    # Get JSON game data from NHL api for (default=every) game(s) in that season
+    for game_num in range(start, num_games):
+        game_id = str(input_year_02) + f"{game_num:04}"
+        print(f"Getting stats from game {game_id}")
+        game_url = "https://api-web.nhle.com/v1/gamecenter/" + game_id + "/play-by-play"
+        response = requests.get(game_url, params={"Content-Type": "application/json"})
+        data = response.json()
+        response.close()
+        if 'plays' not in data:
+            break
+
+        previous = None  # Initialize previous event
+        for i in range(len(data["plays"])):
+            event = Event(data["plays"][i], previous)
+            if event.get_type() in ("goal", "miss", "missed-shot", "shot-on-goal", "blocked_shot"):
+                nn_out.append(event.get_goal())  # Add outcome for that shot
+                nn_in.append(event.outclean())  # Add vector of data for that shot
+            previous = event  # Save event to be previous for the next event
+
+    nn_out = np.array(nn_out)
+    return nn_in, nn_out
+
+
 def get_shot_data_current(start=1):
     """
     Process all shot data throughout reg season from current year starting from start
@@ -482,6 +523,7 @@ def create_models(numfeats, tiny=True, med=True, med_tanh=True, large_sig=True, 
             tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Dense(1, activation="sigmoid")], name="Tiny")
         output.append(tiny_mod)
+        del tiny_mod
     if med:
         med_mod = tf.keras.Sequential([
             tf.keras.layers.Dense(64, activation='relu', input_shape=(numfeats,)),
@@ -492,6 +534,7 @@ def create_models(numfeats, tiny=True, med=True, med_tanh=True, large_sig=True, 
             tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Dense(1, activation="sigmoid")], name="Medium")
         output.append(med_mod)
+        del med_mod
     if med_tanh:
         med_tanh_mod = tf.keras.Sequential([
             tf.keras.layers.Dense(64, activation='tanh', input_shape=(numfeats,)),
@@ -502,6 +545,7 @@ def create_models(numfeats, tiny=True, med=True, med_tanh=True, large_sig=True, 
             tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Dense(1, activation="sigmoid")], name="Medium_tanh")
         output.append(med_tanh_mod)
+        del med_tanh_mod
     if large_sig:
         large_sig_mod = tf.keras.Sequential([
             tf.keras.layers.Dense(64, activation='sigmoid', input_shape=(numfeats,)),
@@ -514,6 +558,68 @@ def create_models(numfeats, tiny=True, med=True, med_tanh=True, large_sig=True, 
             tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Dense(1, activation="sigmoid")], name="Large_sigmoid")
         output.append(large_sig_mod)
+        del large_sig_mod
+    return output
+
+
+def create_models_test(numfeats, models=None, dropout=0.2):
+    """
+    Create Sequential models using appropriate number of input features
+
+    NOTE: REFORMAT SO MODEL CHOICES AS BOOLEAN VECTOR [1,0,0,0] for tiny only
+
+    :param numfeats: number of features in input tensor
+    :param models: Boolean vector of which models to train (tiny, med, med_tanh, large)
+    :param dropout: proportion of dropout between each dense layer
+    :return: models created stored in a list
+    """
+    if models is None:
+        models = [1, 0, 0, 0]
+    output = []
+    if models[0]:
+        tiny_mod = tf.keras.Sequential([
+            tf.keras.layers.Dense(128, activation='elu', input_shape=(numfeats,)),
+            tf.keras.layers.Dropout(dropout),
+            tf.keras.layers.Dense(512, activation='elu'),
+            tf.keras.layers.Dropout(dropout),
+            tf.keras.layers.Dense(1, activation="sigmoid")], name="Tiny")
+        output.append(tiny_mod)
+        del tiny_mod
+    if models[1]:
+        med_mod = tf.keras.Sequential([
+            tf.keras.layers.Dense(64, activation='relu', input_shape=(numfeats,)),
+            tf.keras.layers.Dropout(dropout),
+            tf.keras.layers.Dense(512, activation='relu'),
+            tf.keras.layers.Dropout(dropout),
+            tf.keras.layers.Dense(512, activation='relu'),
+            tf.keras.layers.Dropout(dropout),
+            tf.keras.layers.Dense(1, activation="sigmoid")], name="Medium")
+        output.append(med_mod)
+        del med_mod
+    if models[2]:
+        med_tanh_mod = tf.keras.Sequential([
+            tf.keras.layers.Dense(64, activation='tanh', input_shape=(numfeats,)),
+            tf.keras.layers.Dropout(dropout),
+            tf.keras.layers.Dense(512, activation='tanh'),
+            tf.keras.layers.Dropout(dropout),
+            tf.keras.layers.Dense(512, activation='tanh'),
+            tf.keras.layers.Dropout(dropout),
+            tf.keras.layers.Dense(1, activation="sigmoid")], name="Medium_tanh")
+        output.append(med_tanh_mod)
+        del med_tanh_mod
+    if models[3]:
+        large_sig_mod = tf.keras.Sequential([
+            tf.keras.layers.Dense(64, activation='sigmoid', input_shape=(numfeats,)),
+            tf.keras.layers.Dropout(dropout),
+            tf.keras.layers.Dense(512, activation='sigmoid'),
+            tf.keras.layers.Dropout(dropout),
+            tf.keras.layers.Dense(2048, activation='sigmoid'),
+            tf.keras.layers.Dropout(dropout),
+            tf.keras.layers.Dense(512, activation='sigmoid'),
+            tf.keras.layers.Dropout(dropout),
+            tf.keras.layers.Dense(1, activation="sigmoid")], name="Large_sigmoid")
+        output.append(large_sig_mod)
+        del large_sig_mod
     return output
 
 
@@ -526,29 +632,14 @@ def data_parse_to_csv():
 
     :return: None
     """
-    train_in_11, train_lab_11 = get_shot_data(input_year_02=201102, num_games=1230)
-    train_in_12, train_lab_12 = get_shot_data(input_year_02=201202, num_games=720)
-    train_in_13, train_lab_13 = get_shot_data(input_year_02=201302, num_games=1230)
-    train_in_14, train_lab_14 = get_shot_data(input_year_02=201402, num_games=1230)
-    train_in_15, train_lab_15 = get_shot_data(input_year_02=201502, num_games=1230)
-    train_in_16, train_lab_16 = get_shot_data(input_year_02=201602, num_games=1230)
-    train_in_17, train_lab_17 = get_shot_data(input_year_02=201702, num_games=1271)
-    train_in_18, train_lab_18 = get_shot_data(input_year_02=201802, num_games=1271)
-    train_in_19, train_lab_19 = get_shot_data(input_year_02=201902, num_games=1082)
-    train_in_20, train_lab_20 = get_shot_data(input_year_02=202002, num_games=868)
-    train_in_21, train_lab_21 = get_shot_data(input_year_02=202102, num_games=1312)
-    train_in_22, train_lab_22 = get_shot_data(input_year_02=202202, num_games=1312)
+    train_in, train_lab = list(), list()
+
+    for yr in range(11, 23):
+        feats, labs = get_shot_data_test(yr, start=1)
+        train_in.extend(feats)
+        train_lab.extend(labs)
+
     train_in_23, train_lab_23 = get_shot_data_current(start=1)
-
-    train_in, train_lab = list(train_in_11), list(train_lab_11)
-
-    for inp, lab in zip([train_in_11, train_in_12, train_in_13, train_in_14, train_in_15, train_in_16, train_in_17,
-                         train_in_18, train_in_19, train_in_20, train_in_21, train_in_22],
-                        [train_lab_11, train_lab_12, train_lab_13, train_lab_14, train_lab_15, train_lab_16,
-                         train_lab_17, train_lab_18, train_lab_19, train_lab_20, train_lab_21, train_lab_22]):
-        train_in.extend(inp)
-        train_lab.extend(lab)
-
     test_in, test_lab = list(train_in_23), list(train_lab_23)
 
     columns = ["Event x-coord", "Event y-coord", "Event distance", "Event angle", "Prev x-coord", "Prev y-coord",
@@ -557,16 +648,15 @@ def data_parse_to_csv():
                "Period", "Shot method", "Event team owner", "One-ice situation"]
 
     training_df = pd.DataFrame(train_in, columns=columns)
+    training_df["Goal"] = train_lab
+    training_df.to_csv("data/trainingall.csv", index=True)
+
     testing_df = pd.DataFrame(test_in, columns=columns)
-    training_lab_df = pd.DataFrame(train_lab, columns=["Goal"])
-    testing_lab_df = pd.DataFrame(test_lab, columns=["Goal"])
-    training_df.to_csv("data/training11-22.csv", index=True)
-    testing_df.to_csv("data/testing23.csv", index=True)
-    training_lab_df.to_csv("data/labs_training11-22.csv", index=True)
-    testing_lab_df.to_csv("data/labs_testing23.csv", index=True)
+    testing_df["Goal"] = test_lab
+    testing_df.to_csv("data/testingall.csv", index=True)
 
 
-def recreate_dataset(csv_file, full, num_intfeats=12, out_len=1000):
+def recreate_dataset(csv_file, full=True, num_intfeats=12, out_len=1000):
     """
     Use prepared csvs (created by data_parse_to_csv()) to read files and create lists useable for training/testing
 
@@ -582,34 +672,18 @@ def recreate_dataset(csv_file, full, num_intfeats=12, out_len=1000):
             row = line.rstrip().split(",")[1:]
             if len(row) > 1:
                 # noinspection PyTypeChecker
-                row = [int(item) for item in row[:num_intfeats]] + [str(item) for item in row[num_intfeats:]]
+                row = [int(item) for item in row[:num_intfeats]] + \
+                      [str(item) for item in row[num_intfeats:-1]] + \
+                      [int(row[-1])]
             else:
                 row = int(row[0])
             output.append(row)
     if full:
         return output
-    return output[0:out_len]
+    return output[:out_len]
 
 
 def update_current_season(csv_file):
-    """
-    Update current season's csv to include recent games, creates new csv
-
-    :param csv_file: path to csv
-    :return: None
-    """
-    train_in_23, train_lab_23 = get_shot_data_current(start=1)
-    columns = ["Event x-coord", "Event y-coord", "Event distance", "Event angle", "Prev x-coord", "Prev y-coord",
-               "Prev distance", "Prev angle", "Event anglular speed", "Event linear speed", "Time since prev event",
-               "Seconds remaining period", "Event zone", "Prev zone", "Prev type", "Player1", "Player2",
-               "Period", "Shot method", "Event team owner", "One-ice situation"]
-    testing_in_df = pd.DataFrame(train_in_23, columns=columns)
-    testing_lab_df = pd.DataFrame(train_lab_23, columns=["Goal"])
-    testing_in_df.to_csv(csv_file, index=True)
-    testing_lab_df.to_csv(f"labs_{csv_file}", index=True)
-
-
-def update_current_season_test(csv_file):
     """
     Update current season's csv to include recent games, creates new csv
 
@@ -645,7 +719,44 @@ def build_train_eval(train, train_lab, test, test_lab, num_tests=100, show_predi
     print(f"Number of features: {len(train[0])}")
 
     # Evaluate models with new unseen test data
-    for mod in create_models(len(train[0]), tiny=True, med=True, med_tanh=True, large_sig=True):
+    for mod in create_models(len(train[0]), tiny=True, med=False, med_tanh=False, large_sig=False):
+        # Compile and Train models and store progress
+        fitted = compile_and_fit(mod, concat_input=train, train_label=train_lab, patience=20, plot=False)
+        size_histories[f"{mod.name}"] = fitted
+        if plot:
+            plot_loss(fitted, title=f"{mod.name} Training vs Validation Loss")
+        loss, bin_entr, acc = mod.evaluate(test, test_lab, verbose=2)
+        print(f"{mod.name} \n Evaluation loss, binary crossentropy, acc = {(loss, bin_entr, acc)}")
+        if show_predictions:
+            # Prediction of some shots
+            predictions = mod.predict(test[rando:rando + num_tests])
+            print("\n" + f"{mod.name} Predictions:")
+            for pred, truth in zip(predictions, test_lab[rando:rando + num_tests]):
+                state = ('No Goal', 'Goal')[truth]
+                print(f"Predicted: {pred[0] * 100:.2f}% vs Truth: {state}")
+
+
+def build_train_eval_test(train, train_lab, test, test_lab, models=None, num_tests=100, show_predictions=True, plot=True):
+    """
+    Build, train and evaluate densely connected models with showiing of predictions on the test set (default=True) and
+    plotting of training vs validation loss (default=True)
+
+    :param train:
+    :param train_lab:
+    :param test:
+    :param test_lab:
+    :param models: Boolean vector of which models to train (tiny, med, med_tanh, large)
+    :param num_tests:
+    :param show_predictions:
+    :param plot:
+    :return:
+    """
+    size_histories = {}
+    rando = random.randint(10, len(test_lab) - num_tests)
+    print(f"Number of features: {len(train[0])}")
+
+    # Evaluate models with new unseen test data
+    for mod in create_models_test(len(train[0]), models):
         # Compile and Train models and store progress
         fitted = compile_and_fit(mod, concat_input=train, train_label=train_lab, patience=20, plot=False)
         size_histories[f"{mod.name}"] = fitted
@@ -719,22 +830,28 @@ def main():
 
 def main2():
     # Collect data from NHL API and produce csvs
-    data_parse_to_csv()
+    # data_parse_to_csv_test()
     # Import NHL shot data from previous run
-    train_in = recreate_dataset("data/training11-22.csv", full=True)
-    test_in = recreate_dataset("data/testing23.csv", full=True)
-    train_lab = recreate_dataset("data/labs_training11-22.csv", full=True)
-    test_lab = recreate_dataset("data/labs_testing23.csv", full=True)
+    train = recreate_dataset("data/trainingall.csv")
+    test = recreate_dataset("data/testingall.csv")
+    train_in, train_lab = [event[:-1] for event in train], [event[-1] for event in train]
+    test_in, test_lab = [event[:-1] for event in test], [event[-1] for event in test]
     # Text vectorize and one-hot
     onehotted_input, onehotted_test = vectorize_onehot(train_ds=train_in, test_ds=test_in, verbose=False)
     # Create Constant Tensors for ease of computing and leaving in/out tensors untouched
     concat_input, train_label = tf.constant(onehotted_input), tf.constant(train_lab)
     concat_test, test_label = tf.constant(onehotted_test), tf.constant(test_lab)
     # Modelling
-    build_train_eval(concat_input, train_label, concat_test, test_label, show_predictions=True, plot=False)
+    build_train_eval_test(concat_input, train_label, concat_test, test_label, show_predictions=True, plot=False)
 
 
 if __name__ == "__main__":
-    update_current_season_test("testing23.csv")
+    main2()
 
 
+"""
+Add Bool vector for model selection
+del things after building to save space
+Change inputs nodes 
+
+"""
